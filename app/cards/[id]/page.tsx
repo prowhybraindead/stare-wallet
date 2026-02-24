@@ -257,7 +257,7 @@ export default function CardDetailPage() {
         try {
             const idToken = await auth.currentUser?.getIdToken()
             if (!idToken) throw new Error("Not authenticated")
-            await toggleCardFreeze(idToken, card.cardId, !card.isFrozen)
+            await toggleCardFreeze(idToken, card.cardId)
             toast({ title: card.isFrozen ? "Thẻ đã mở đóng băng" : "Thẻ đã đóng băng" })
         } catch (err: any) {
             toast({ title: "Lỗi", description: err.message, variant: "destructive" })
