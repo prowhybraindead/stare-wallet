@@ -1,6 +1,7 @@
 "use client"
 import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { motion } from "framer-motion"
 import { auth, db } from "@/lib/firebase"
 import { onAuthStateChanged } from "firebase/auth"
@@ -216,9 +217,10 @@ export default function DashboardPage() {
               </div>
               <div className="overflow-x-auto flex gap-4 pb-2 snap-x">
                 {cards.map(card => (
-                  <div key={card.cardId} className="flex-shrink-0 snap-start">
+                  <Link key={card.cardId} href={`/cards/${card.cardId}`}
+                    className="flex-shrink-0 snap-start cursor-pointer transition-transform hover:scale-[1.02] active:scale-[0.98]">
                     <VirtualCard card={card} compact />
-                  </div>
+                  </Link>
                 ))}
               </div>
             </motion.div>
@@ -296,9 +298,10 @@ export default function DashboardPage() {
             </div>
             <div className="overflow-x-auto flex gap-4 pb-2 snap-x">
               {cards.map(card => (
-                <div key={card.cardId} className="flex-shrink-0 snap-start">
+                <Link key={card.cardId} href={`/cards/${card.cardId}`}
+                  className="flex-shrink-0 snap-start cursor-pointer transition-transform hover:scale-[1.02] active:scale-[0.98]">
                   <VirtualCard card={card} compact />
-                </div>
+                </Link>
               ))}
             </div>
           </motion.div>

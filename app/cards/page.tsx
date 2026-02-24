@@ -1,17 +1,18 @@
 "use client"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { motion, AnimatePresence } from "framer-motion"
 import { auth, db } from "@/lib/firebase"
 import { onAuthStateChanged } from "firebase/auth"
 import { collection, query, where, onSnapshot, getDocs } from "firebase/firestore"
-import { createCard, toggleCardFreeze } from "@/lib/actions/cards"
+import { createCard } from "@/lib/actions/cards"
 import { VirtualCard } from "@/components/VirtualCard"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/hooks/use-toast"
-import { ArrowLeft, Plus, Snowflake, CreditCard, Loader2, Upload } from "lucide-react"
+import { ArrowLeft, Plus, CreditCard, Loader2 } from "lucide-react"
 import { VirtualCardLogo, BankLogo } from "@/components/VirtualCardLogo"
 
 export default function CardsPage() {
@@ -19,7 +20,6 @@ export default function CardsPage() {
   const [cards, setCards] = useState<any[]>([])
   const [templates, setTemplates] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
-  const [selectedCard, setSelectedCard] = useState<any>(null)
   const [uploading, setUploading] = useState(false)
 
   async function validateAndUploadImage(file: File): Promise<string | null> {
@@ -94,17 +94,7 @@ export default function CardsPage() {
     } finally { setLoading(false) }
   }
 
-  async function handleFreezeCard(cardId: string) {
-    try {
-      const idToken = await auth.currentUser?.getIdToken()
-      if (!idToken) return
-      const frozen = await toggleCardFreeze(idToken, cardId)
-      toast({ title: frozen ? "Đã khóa thẻ" : "Đã mở khóa thẻ" })
-      setSelectedCard(null)
-    } catch (err: any) {
-      toast({ title: "Lỗi", description: err.message, variant: "destructive" })
-    }
-  }
+
 
   return (
     <div className="min-h-screen">
@@ -155,13 +145,11 @@ export default function CardsPage() {
         ) : (
           cards.map((card, i) => (
             <motion.div key={card.cardId} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }} className="space-y-3">
-              <VirtualCard card={card} />
-              <Button onClick={() => handleFreezeCard(card.cardId)} variant="outline"
-                className="w-full border-white/10 text-slate-300 hover:text-white">
-                <Snowflake className="w-4 h-4 mr-2" />
-                {card.isFrozen ? "Mở khóa thẻ" : "Khóa thẻ"}
-              </Button>
+              transition={{ delay: i * 0.1 }}>
+              <Link href={`/cards/${card.cardId}`}
+                className="block cursor-pointer transition-transform hover:scale-[1.02] active:scale-[0.98]">
+                <VirtualCard card={card} />
+              </Link>
             </motion.div>
           ))
         )}

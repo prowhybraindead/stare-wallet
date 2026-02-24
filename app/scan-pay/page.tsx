@@ -1,7 +1,8 @@
 "use client"
-import { useState } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import { motion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
+import { Html5Qrcode } from "html5-qrcode"
 import { auth } from "@/lib/firebase"
 import { payMerchantInvoice } from "@/lib/actions/transfer"
 import { formatCurrency } from "@/lib/utils"
@@ -11,9 +12,13 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/hooks/use-toast"
-import { ArrowLeft, Scan, Camera, CreditCard, Link as LinkIcon, Loader2, Receipt, CheckCircle } from "lucide-react"
+import {
+    ArrowLeft, Camera, CameraOff, CreditCard, Link as LinkIcon,
+    Loader2, Receipt, CheckCircle, RefreshCw, ScanLine,
+} from "lucide-react"
 
 type InvoicePayload = { type: "UPGRADE_INVOICE"; invoiceId: string; amount: number }
+type CameraState = "requesting" | "granted" | "denied" | "error"
 
 export default function ScanPayPage() {
     const router = useRouter()
@@ -25,7 +30,27 @@ export default function ScanPayPage() {
     const [pin, setPin] = useState("")
     const [paymentDone, setPaymentDone] = useState(false)
 
-    function handleQRResult(rawText: string) {
+    // Camera / Scanner state
+    const [cameraState, setCameraState] = useState<CameraState>("requesting")
+    const [scannerError, setScannerError] = useState("")
+    const [scanActive, setScanActive] = useState(true)
+    const scannerRef = useRef<Html5Qrcode | null>(null)
+    const scannedRef = useRef(false)
+
+    // ── QR Result Handler ────────────────────────────────────────────────
+    const handleQRResult = useCallback((rawText: string) => {
+        if (scannedRef.current) return
+        scannedRef.current = true
+
+        // Haptic feedback
+        if (navigator.vibrate) navigator.vibrate(200)
+
+        // Stop camera
+        if (scannerRef.current?.isScanning) {
+            scannerRef.current.stop().catch(() => { })
+        }
+        setScanActive(false)
+
         try {
             const parsed = JSON.parse(rawText)
             if (parsed.type === "UPGRADE_INVOICE" && parsed.invoiceId && parsed.amount) {
@@ -35,8 +60,66 @@ export default function ScanPayPage() {
         } catch { }
         // Fallback: treat as linkId
         setLinkId(rawText)
+        toast({ title: "Mã QR đã quét!", description: "Xác nhận để thanh toán." })
+    }, [])
+
+    // ── Camera Init & Cleanup ────────────────────────────────────────────
+    useEffect(() => {
+        let scanner: Html5Qrcode | null = null
+
+        async function initCamera() {
+            try {
+                // Request permission first
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+                stream.getTracks().forEach(t => t.stop()) // release the test stream
+                setCameraState("granted")
+
+                // Init html5-qrcode
+                scanner = new Html5Qrcode("qr-reader")
+                scannerRef.current = scanner
+
+                await scanner.start(
+                    { facingMode: "environment" },
+                    {
+                        fps: 10,
+                        qrbox: { width: 250, height: 250 },
+                        aspectRatio: 1,
+                    },
+                    (decodedText) => handleQRResult(decodedText),
+                    () => { } // ignore decode failures (noise frames)
+                )
+            } catch (err: any) {
+                if (err.name === "NotAllowedError" || err.message?.includes("Permission")) {
+                    setCameraState("denied")
+                    setScannerError("Bạn đã từ chối quyền truy cập Camera.")
+                } else {
+                    setCameraState("error")
+                    setScannerError(err.message || "Không thể khởi tạo camera.")
+                }
+            }
+        }
+
+        if (scanActive && !invoiceData && !paymentDone) {
+            initCamera()
+        }
+
+        return () => {
+            if (scanner?.isScanning) {
+                scanner.stop().catch(() => { })
+            }
+            scanner?.clear()
+        }
+    }, [scanActive, invoiceData, paymentDone, handleQRResult])
+
+    // ── Retry camera ─────────────────────────────────────────────────────
+    function retryCamera() {
+        scannedRef.current = false
+        setScannerError("")
+        setCameraState("requesting")
+        setScanActive(true)
     }
 
+    // ── Invoice Payment ──────────────────────────────────────────────────
     async function handlePayInvoice() {
         if (!invoiceData || pin.length < 4) {
             toast({ title: "Vui lòng nhập mã PIN (tối thiểu 4 ký tự)", variant: "destructive" })
@@ -54,6 +137,7 @@ export default function ScanPayPage() {
         } finally { setLoading(false) }
     }
 
+    // ── Manual Link Payment ──────────────────────────────────────────────
     async function handlePayNow(e: React.FormEvent) {
         e.preventDefault()
         if (!linkId.trim()) {
@@ -61,7 +145,6 @@ export default function ScanPayPage() {
             return
         }
         setLoading(true)
-        // Check if this is an invoice JSON payload
         handleQRResult(linkId.trim())
         if (invoiceData) { setLoading(false); return }
 
@@ -77,7 +160,9 @@ export default function ScanPayPage() {
         }, 800)
     }
 
-    // ── INVOICE PAYMENT SCREEN ──
+    // ══════════════════════════════════════════════════════════════════════
+    // INVOICE PAYMENT SCREEN
+    // ══════════════════════════════════════════════════════════════════════
     if (invoiceData && !paymentDone) {
         return (
             <div className="min-h-screen">
@@ -116,7 +201,9 @@ export default function ScanPayPage() {
         )
     }
 
-    // ── PAYMENT SUCCESS SCREEN ──
+    // ══════════════════════════════════════════════════════════════════════
+    // PAYMENT SUCCESS
+    // ══════════════════════════════════════════════════════════════════════
     if (paymentDone) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -133,7 +220,9 @@ export default function ScanPayPage() {
         )
     }
 
-    // ── MAIN SCAN/MANUAL ENTRY SCREEN ──
+    // ══════════════════════════════════════════════════════════════════════
+    // MAIN SCAN SCREEN
+    // ══════════════════════════════════════════════════════════════════════
     return (
         <div className="min-h-screen">
             <header className="sticky top-0 z-40 glass border-b border-white/10 px-4 py-3">
@@ -142,7 +231,9 @@ export default function ScanPayPage() {
                         <Button variant="ghost" size="icon" onClick={() => router.back()}><ArrowLeft className="w-5 h-5" /></Button>
                         <h1 className="font-semibold text-lg">Quét & Trả</h1>
                     </div>
-                    <div className="w-9" />
+                    <Badge variant="outline" className="text-[10px]">
+                        <ScanLine className="w-3 h-3 mr-1" />QR Scanner
+                    </Badge>
                 </div>
             </header>
 
@@ -153,28 +244,95 @@ export default function ScanPayPage() {
                         <p className="text-slate-400 text-sm mt-1">Quét mã QR hoặc nhập ID liên kết thanh toán</p>
                     </div>
 
-                    {/* Camera Scanner Placeholder */}
-                    <div className="relative aspect-[4/3] w-full max-w-sm mx-auto rounded-3xl overflow-hidden glass border-2 border-blue-500/30 bg-slate-900/50 flex flex-col items-center justify-center group shadow-2xl shadow-blue-500/10">
-                        <div className="absolute inset-0 bg-gradient-to-t from-blue-900/20 to-transparent opacity-50" />
-                        <motion.div
-                            animate={{ y: ["0%", "300%", "0%"] }}
-                            transition={{ repeat: Infinity, duration: 3, ease: "linear" }}
-                            className="absolute top-1/4 left-10 right-10 h-0.5 bg-blue-400 shadow-[0_0_10px_2px_rgba(96,165,250,0.5)] z-10"
-                        />
-                        <div className="absolute top-8 left-8 w-8 h-8 border-t-4 border-l-4 border-blue-500 rounded-tl-xl" />
-                        <div className="absolute top-8 right-8 w-8 h-8 border-t-4 border-r-4 border-blue-500 rounded-tr-xl" />
-                        <div className="absolute bottom-8 left-8 w-8 h-8 border-b-4 border-l-4 border-blue-500 rounded-bl-xl" />
-                        <div className="absolute bottom-8 right-8 w-8 h-8 border-b-4 border-r-4 border-blue-500 rounded-br-xl" />
-                        <Camera className="w-12 h-12 text-blue-500/50 mb-4 group-hover:scale-110 transition-transform" />
-                        <p className="text-sm text-blue-300/70 font-medium">Đang tìm mã QR...</p>
+                    {/* ── Camera Scanner ──────────────────────────────── */}
+                    <div className="relative w-full max-w-sm mx-auto rounded-3xl overflow-hidden border-2 border-purple-500/30 bg-slate-950 shadow-2xl shadow-purple-500/10">
+
+                        {/* Camera feed container */}
+                        <div className="aspect-square relative">
+                            <div id="qr-reader" className="w-full h-full [&>video]:!object-cover [&>video]:!rounded-3xl" />
+
+                            {/* ── Viewfinder Overlay ──────────────────── */}
+                            <div className="absolute inset-0 pointer-events-none z-10">
+                                {/* Dark vignette edges */}
+                                <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/40" />
+
+                                {/* Center target box (250x250 aligned with qrbox) */}
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                    <div className="w-[250px] h-[250px] relative">
+                                        {/* Animated corners */}
+                                        <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 2 }}
+                                            className="absolute -top-1 -left-1 w-10 h-10 border-t-[3px] border-l-[3px] border-purple-400 rounded-tl-xl" />
+                                        <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 2, delay: 0.5 }}
+                                            className="absolute -top-1 -right-1 w-10 h-10 border-t-[3px] border-r-[3px] border-purple-400 rounded-tr-xl" />
+                                        <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 2, delay: 1 }}
+                                            className="absolute -bottom-1 -left-1 w-10 h-10 border-b-[3px] border-l-[3px] border-purple-400 rounded-bl-xl" />
+                                        <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 2, delay: 1.5 }}
+                                            className="absolute -bottom-1 -right-1 w-10 h-10 border-b-[3px] border-r-[3px] border-purple-400 rounded-br-xl" />
+
+                                        {/* Scanning laser line */}
+                                        <motion.div
+                                            animate={{ y: ["0%", "100%", "0%"] }}
+                                            transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut" }}
+                                            className="absolute left-2 right-2 h-[2px] bg-gradient-to-r from-transparent via-purple-400 to-transparent shadow-[0_0_12px_3px_rgba(168,85,247,0.4)]"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* ── Permission States ──────────────────── */}
+                            <AnimatePresence>
+                                {cameraState === "requesting" && (
+                                    <motion.div key="requesting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                                        className="absolute inset-0 z-20 bg-slate-950 flex flex-col items-center justify-center gap-4">
+                                        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 2, ease: "linear" }}>
+                                            <Camera className="w-12 h-12 text-purple-400" />
+                                        </motion.div>
+                                        <p className="text-slate-400 text-sm">Đang yêu cầu quyền Camera...</p>
+                                    </motion.div>
+                                )}
+
+                                {(cameraState === "denied" || cameraState === "error") && (
+                                    <motion.div key="denied" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                                        className="absolute inset-0 z-20 bg-slate-950 flex flex-col items-center justify-center gap-4 p-6">
+                                        <div className="w-16 h-16 rounded-full bg-red-950/40 flex items-center justify-center">
+                                            <CameraOff className="w-8 h-8 text-red-400" />
+                                        </div>
+                                        <p className="text-slate-300 text-sm text-center font-medium">
+                                            {scannerError || "Camera không khả dụng"}
+                                        </p>
+                                        <p className="text-slate-500 text-xs text-center max-w-[260px]">
+                                            Vui lòng cấp quyền Camera trong cài đặt trình duyệt để tiếp tục quét mã QR
+                                        </p>
+                                        <Button onClick={retryCamera} variant="outline" size="sm"
+                                            className="border-white/10 text-purple-400 hover:bg-purple-950/30 mt-2">
+                                            <RefreshCw className="w-4 h-4 mr-2" />Thử lại
+                                        </Button>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
+
+                        {/* Scanner status bar */}
+                        <div className="px-4 py-3 bg-slate-900/80 backdrop-blur-sm border-t border-white/5 flex items-center justify-center gap-2">
+                            {cameraState === "granted" && scanActive ? (
+                                <>
+                                    <motion.div animate={{ scale: [1, 1.3, 1] }} transition={{ repeat: Infinity, duration: 1.5 }}
+                                        className="w-2 h-2 rounded-full bg-purple-400" />
+                                    <p className="text-purple-300 text-xs font-medium">Đang tìm mã QR...</p>
+                                </>
+                            ) : !scanActive ? (
+                                <p className="text-emerald-400 text-xs font-medium">✓ Đã quét thành công</p>
+                            ) : null}
+                        </div>
                     </div>
 
+                    {/* ── Divider ─────────────────────────────────────── */}
                     <div className="relative py-4">
                         <div className="absolute inset-x-0 top-1/2 flex items-center"><div className="w-full border-t border-white/10" /></div>
                         <div className="relative flex justify-center"><span className="bg-slate-950 px-4 text-slate-500 text-sm font-medium">HOẶC</span></div>
                     </div>
 
-                    {/* Manual Entry */}
+                    {/* ── Manual Entry ────────────────────────────────── */}
                     <div className="glass rounded-2xl p-6">
                         <form onSubmit={handlePayNow} className="space-y-4">
                             <div>
@@ -195,6 +353,16 @@ export default function ScanPayPage() {
                             </Button>
                         </form>
                     </div>
+
+                    {/* ── Rescan button (after successful scan) ───────── */}
+                    {!scanActive && (
+                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                            <Button onClick={retryCamera} variant="outline"
+                                className="w-full border-white/10 text-slate-400 hover:text-white">
+                                <RefreshCw className="w-4 h-4 mr-2" />Quét lại mã QR
+                            </Button>
+                        </motion.div>
+                    )}
                 </motion.div>
             </main>
         </div>
