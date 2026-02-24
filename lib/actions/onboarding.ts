@@ -1,11 +1,7 @@
 "use server"
 import { getAdminAuth, getAdminDb } from "@/lib/firebase-admin"
 import { FieldValue } from "firebase-admin/firestore"
-import * as crypto from "crypto"
-
-function hashPin(pin: string): string {
-  return crypto.createHash("sha256").update(pin + (process.env.PIN_SALT || "sharkfintech")).digest("hex")
-}
+import bcrypt from "bcryptjs"
 
 export async function completeOnboarding(idToken: string, displayName: string, pin: string) {
   const adminAuth = getAdminAuth()
@@ -22,7 +18,7 @@ export async function completeOnboarding(idToken: string, displayName: string, p
     uid,
     email: email || "",
     displayName: displayName.trim(),
-    pinCode: hashPin(pin),
+    pinCode: bcrypt.hashSync(pin, 10),
     mainBalance: 0,
     isFrozen: false,
     createdAt: FieldValue.serverTimestamp(),
@@ -36,5 +32,6 @@ export async function verifyPin(idToken: string, pin: string): Promise<boolean> 
   const userDoc = await adminDb.collection("users").doc(decoded.uid).get()
   if (!userDoc.exists) return false
   const stored = userDoc.data()?.pinCode
-  return stored === hashPin(pin)
+  if (!stored) return false
+  return bcrypt.compare(pin, stored)
 }

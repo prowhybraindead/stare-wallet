@@ -1,12 +1,8 @@
 "use server"
 import { getAdminAuth, getAdminDb } from "@/lib/firebase-admin"
 import { FieldValue, Timestamp } from "firebase-admin/firestore"
-import * as crypto from "crypto"
+import bcrypt from "bcryptjs"
 import { v4 as uuidv4 } from "uuid"
-
-function hashPin(pin: string): string {
-  return crypto.createHash("sha256").update(pin + (process.env.PIN_SALT || "sharkfintech")).digest("hex")
-}
 
 const PLATFORM_FEE_RATE = 0.001 // 0.1%
 
@@ -31,7 +27,9 @@ export async function p2pTransfer(
   if (!senderDoc.exists) throw new Error("Người dùng không tồn tại")
   const senderData = senderDoc.data()!
 
-  if (senderData.pinCode !== hashPin(pin)) throw new Error("Mã PIN không đúng")
+  if (!senderData.pinCode) throw new Error("Tài khoản chưa thiết lập mã PIN")
+  const pinValid = await bcrypt.compare(pin, senderData.pinCode)
+  if (!pinValid) throw new Error("Mã PIN không đúng")
   if (senderData.isFrozen) throw new Error("Tài khoản của bạn đang bị khóa")
   if (senderData.mainBalance < amount) throw new Error("Số dư không đủ")
 
@@ -100,7 +98,9 @@ export async function payMerchantQR(
   const userData = userDoc.data()!
   const linkData = linkDoc.data()!
 
-  if (userData.pinCode !== hashPin(pin)) throw new Error("Mã PIN không đúng")
+  if (!userData.pinCode) throw new Error("Tài khoản chưa thiết lập mã PIN")
+  const pinValid = await bcrypt.compare(pin, userData.pinCode)
+  if (!pinValid) throw new Error("Mã PIN không đúng")
   if (userData.isFrozen) throw new Error("Tài khoản bị khóa")
   if (linkData.status !== "UNPAID") throw new Error("Mã QR đã được thanh toán")
   if (userData.mainBalance < linkData.amount) throw new Error("Số dư không đủ")
@@ -147,7 +147,9 @@ export async function payMerchantInvoice(idToken: string, pin: string, invoiceId
     if (!userDoc.exists) return { success: false, error: "Tài khoản không tồn tại" }
     const user = userDoc.data()!
     if (user.isFrozen) return { success: false, error: "Tài khoản đang bị khóa" }
-    if (user.pinCode !== hashPin(pin)) return { success: false, error: "Mã PIN không chính xác" }
+    if (!user.pinCode) return { success: false, error: "Tài khoản chưa thiết lập mã PIN" }
+    const pinValid = await bcrypt.compare(pin, user.pinCode)
+    if (!pinValid) return { success: false, error: "Mã PIN không chính xác" }
 
     // Check invoice
     const invDoc = await db.collection("invoices").doc(invoiceId).get()
