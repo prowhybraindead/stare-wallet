@@ -37,8 +37,8 @@ export default function ScanPayPage() {
     const scannerRef = useRef<Html5Qrcode | null>(null)
     const scannedRef = useRef(false)
 
-    // ── QR Result Handler ────────────────────────────────────────────────
-    const handleQRResult = useCallback((rawText: string) => {
+    // ── Smart Data Parser ─────────────────────────────────────────────
+    const processScannedData = useCallback((rawText: string) => {
         if (scannedRef.current) return
         scannedRef.current = true
 
@@ -51,17 +51,40 @@ export default function ScanPayPage() {
         }
         setScanActive(false)
 
+        const trimmed = rawText.trim()
+
+        // 1. Try JSON invoice payload
         try {
-            const parsed = JSON.parse(rawText)
+            const parsed = JSON.parse(trimmed)
             if (parsed.type === "UPGRADE_INVOICE" && parsed.invoiceId && parsed.amount) {
                 setInvoiceData(parsed)
+                toast({ title: "Hóa đơn đã nhận!", description: `Số tiền: ${parsed.amount.toLocaleString("vi-VN")}₫` })
                 return
             }
         } catch { }
-        // Fallback: treat as linkId
-        setLinkId(rawText)
-        toast({ title: "Mã QR đã quét!", description: "Xác nhận để thanh toán." })
-    }, [])
+
+        // 2. Check if it's a URL or contains invoice identifiers
+        if (trimmed.startsWith("http") || trimmed.includes("/pay/") || trimmed.includes("invoice")) {
+            let invoiceId = trimmed
+            try {
+                const url = new URL(trimmed)
+                const parts = url.pathname.split("/").filter(Boolean)
+                invoiceId = parts[parts.length - 1] || trimmed
+            } catch {
+                // Not a valid URL — use the raw string minus common prefixes
+                const match = trimmed.match(/(?:invoice[=\/:]?\s*)([a-zA-Z0-9_-]+)/i)
+                if (match) invoiceId = match[1]
+            }
+            // Set as invoice data with unknown amount (user will see it after fetch)
+            setInvoiceData({ type: "UPGRADE_INVOICE", invoiceId, amount: 0 })
+            toast({ title: "Hóa đơn đã quét!", description: `ID: ${invoiceId.slice(0, 12)}...` })
+            return
+        }
+
+        // 3. Fallback: treat as P2P transfer target (user ID, phone, etc.)
+        toast({ title: "Mã QR đã quét!", description: "Đang chuyển hướng..." })
+        router.push(`/transfer?to=${encodeURIComponent(trimmed)}`)
+    }, [router])
 
     // ── Camera Init & Cleanup ────────────────────────────────────────────
     useEffect(() => {
@@ -85,7 +108,7 @@ export default function ScanPayPage() {
                         qrbox: { width: 250, height: 250 },
                         aspectRatio: 1,
                     },
-                    (decodedText) => handleQRResult(decodedText),
+                    (decodedText) => processScannedData(decodedText),
                     () => { } // ignore decode failures (noise frames)
                 )
             } catch (err: any) {
@@ -109,7 +132,7 @@ export default function ScanPayPage() {
             }
             scanner?.clear()
         }
-    }, [scanActive, invoiceData, paymentDone, handleQRResult])
+    }, [scanActive, invoiceData, paymentDone, processScannedData])
 
     // ── Retry camera ─────────────────────────────────────────────────────
     function retryCamera() {
@@ -129,7 +152,11 @@ export default function ScanPayPage() {
         try {
             const token = await auth.currentUser?.getIdToken()
             if (!token) throw new Error("Chưa đăng nhập")
-            await payMerchantInvoice(token, pin, invoiceData.invoiceId)
+            const result = await payMerchantInvoice(token, pin, invoiceData.invoiceId)
+            if (!result.success) {
+                toast({ title: "Lỗi thanh toán", description: result.error, variant: "destructive" })
+                return
+            }
             setPaymentDone(true)
             toast({ title: "Thanh toán thành công!" })
         } catch (e: any) {
@@ -141,23 +168,13 @@ export default function ScanPayPage() {
     async function handlePayNow(e: React.FormEvent) {
         e.preventDefault()
         if (!linkId.trim()) {
-            toast({ title: "Vui lòng nhập mã Payment Link", variant: "destructive" })
+            toast({ title: "Vui lòng nhập mã hoặc link", variant: "destructive" })
             return
         }
         setLoading(true)
-        handleQRResult(linkId.trim())
-        if (invoiceData) { setLoading(false); return }
-
-        if (linkId.trim().length < 20) {
-            toast({ title: "Mã Payment Link không hợp lệ", variant: "destructive" })
-            setLoading(false)
-            return
-        }
-        setTimeout(() => {
-            setLoading(false)
-            toast({ title: "Mã hợp lệ. Đang chuyển hướng..." })
-            router.push(`/transfer?linkId=${linkId.trim()}`)
-        }, 800)
+        // Use the same smart parser as QR scan
+        processScannedData(linkId.trim())
+        setLoading(false)
     }
 
     // ══════════════════════════════════════════════════════════════════════

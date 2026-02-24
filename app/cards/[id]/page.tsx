@@ -3,6 +3,7 @@ import { useEffect, useState, memo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { auth, db } from "@/lib/firebase"
+import { ThemeToggle } from "@/components/ThemeToggle"
 import { onAuthStateChanged } from "firebase/auth"
 import { doc, onSnapshot, collection, query, where, orderBy, limit, getDocs } from "firebase/firestore"
 import { toggleCardFreeze } from "@/lib/actions/cards"
@@ -328,6 +329,7 @@ export default function CardDetailPage() {
                         <p className="text-slate-500 text-xs font-mono">{card.cardId}</p>
                     </div>
                     <div className="ml-auto flex items-center gap-2">
+                        <ThemeToggle />
                         <Badge variant={card.isFrozen ? "destructive" : "success"} className="text-[10px]">
                             {card.isFrozen ? "ĐÓNG BĂNG" : "HOẠT ĐỘNG"}
                         </Badge>
@@ -349,12 +351,12 @@ export default function CardDetailPage() {
                         />
 
                         {/* Card Info */}
-                        <Card className="bg-white/[0.03] border-white/10">
+                        <Card className="bg-white/[0.03] border-white/10 text-slate-100">
                             <CardContent className="p-4 space-y-3">
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-500 text-sm">Số thẻ</span>
                                     <div className="flex items-center gap-2">
-                                        <span className="font-mono text-sm">
+                                        <span className="font-mono text-sm text-slate-100">
                                             {showNumber ? card.cardNumber : maskCardNumber(card.cardNumber)}
                                         </span>
                                         <button onClick={() => setShowNumber(!showNumber)}
@@ -367,7 +369,7 @@ export default function CardDetailPage() {
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-500 text-sm">CVV</span>
                                     <div className="flex items-center gap-2">
-                                        <span className="font-mono text-sm">{showCVV ? (card.cvv || "123") : "•••"}</span>
+                                        <span className="font-mono text-sm text-slate-100">{showCVV ? (card.cvv || "123") : "•••"}</span>
                                         <button onClick={() => setShowCVV(!showCVV)}
                                             className="text-slate-500 hover:text-white transition-colors">
                                             {showCVV ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -377,12 +379,12 @@ export default function CardDetailPage() {
                                 <div className="h-px bg-white/5" />
                                 <div className="flex justify-between">
                                     <span className="text-slate-500 text-sm">Issuer</span>
-                                    <span className="text-sm font-medium">{card.issuer}</span>
+                                    <span className="text-sm font-medium text-slate-100">{card.issuer}</span>
                                 </div>
                                 <div className="h-px bg-white/5" />
                                 <div className="flex justify-between">
                                     <span className="text-slate-500 text-sm">Hạn sử dụng</span>
-                                    <span className="font-mono text-sm">{card.expiryDate || "12/28"}</span>
+                                    <span className="font-mono text-sm text-slate-100">{card.expiryDate || "12/28"}</span>
                                 </div>
                             </CardContent>
                         </Card>
@@ -441,7 +443,7 @@ export default function CardDetailPage() {
                                         ))}
                                     </div>
                                 </div>
-                                <p className="text-2xl font-bold mt-2">{formatCurrency(totalSpent)}</p>
+                                <p className="text-2xl font-bold mt-2 text-white">{formatCurrency(totalSpent)}</p>
                             </CardHeader>
                             <CardContent className="h-48 pr-2">
                                 <ResponsiveContainer width="100%" height="100%">

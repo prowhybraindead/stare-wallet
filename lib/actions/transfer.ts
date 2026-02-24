@@ -138,49 +138,50 @@ export async function payMerchantQR(
 
 // ── Invoice Payment ───────────────────────────────────────────────────────────
 export async function payMerchantInvoice(idToken: string, pin: string, invoiceId: string) {
-  const decoded = await getAdminAuth().verifyIdToken(idToken)
-  const db = getAdminDb()
+  try {
+    const decoded = await getAdminAuth().verifyIdToken(idToken)
+    const db = getAdminDb()
 
-  // Verify PIN
-  const userDoc = await db.collection("users").doc(decoded.uid).get()
-  if (!userDoc.exists) throw new Error("Tài khoản không tồn tại")
-  const user = userDoc.data()!
-  if (user.isFrozen) throw new Error("Tài khoản đang bị khóa")
-  if (user.pinCode !== hashPin(pin)) throw new Error("Mã PIN không chính xác")
+    // Verify PIN
+    const userDoc = await db.collection("users").doc(decoded.uid).get()
+    if (!userDoc.exists) return { success: false, error: "Tài khoản không tồn tại" }
+    const user = userDoc.data()!
+    if (user.isFrozen) return { success: false, error: "Tài khoản đang bị khóa" }
+    if (user.pinCode !== hashPin(pin)) return { success: false, error: "Mã PIN không chính xác" }
 
-  // Check invoice
-  const invDoc = await db.collection("invoices").doc(invoiceId).get()
-  if (!invDoc.exists) throw new Error("Hóa đơn không tồn tại")
-  const invoice = invDoc.data()!
-  if (invoice.status !== "UNPAID") throw new Error("Hóa đơn đã được xử lý")
+    // Check invoice
+    const invDoc = await db.collection("invoices").doc(invoiceId).get()
+    if (!invDoc.exists) return { success: false, error: "Hóa đơn không tồn tại" }
+    const invoice = invDoc.data()!
+    if (invoice.status !== "UNPAID") return { success: false, error: "Hóa đơn đã được xử lý" }
 
-  // Check balance
-  if ((user.mainBalance || 0) < invoice.amount) throw new Error("Số dư không đủ")
+    // Check balance
+    if ((user.mainBalance || 0) < invoice.amount) return { success: false, error: "Số dư không đủ" }
 
-  // Execute payment
-  await db.runTransaction(async (t) => {
-    // Deduct from user wallet
-    t.update(userDoc.ref, { mainBalance: FieldValue.increment(-invoice.amount) })
-    // Mark invoice as PAID
-    t.update(invDoc.ref, { status: "PAID", paidBy: decoded.uid, paidAt: FieldValue.serverTimestamp() })
-    // Create transaction record
-    const txId = uuidv4()
-    t.set(db.collection("transactions").doc(txId), {
-      transactionId: txId, type: "INVOICE_PAYMENT",
-      amount: invoice.amount, netAmount: invoice.amount, fee: 0,
-      senderId: decoded.uid, receiverId: invoice.merchantId,
-      invoiceId: invoiceId, status: "COMPLETED",
-      timestamp: FieldValue.serverTimestamp(),
-      refundedByAdmin: false,
+    // Execute payment
+    await db.runTransaction(async (t) => {
+      t.update(userDoc.ref, { mainBalance: FieldValue.increment(-invoice.amount) })
+      t.update(invDoc.ref, { status: "PAID", paidBy: decoded.uid, paidAt: FieldValue.serverTimestamp() })
+      const txId = uuidv4()
+      t.set(db.collection("transactions").doc(txId), {
+        transactionId: txId, type: "INVOICE_PAYMENT",
+        amount: invoice.amount, netAmount: invoice.amount, fee: 0,
+        senderId: decoded.uid, receiverId: invoice.merchantId,
+        invoiceId: invoiceId, status: "COMPLETED",
+        timestamp: FieldValue.serverTimestamp(),
+        refundedByAdmin: false,
+      })
     })
-  })
 
-  // Admin notification
-  await db.collection("admin_notifications").add({
-    type: "INVOICE_PAID", invoiceId,
-    message: `Hóa đơn ${invoiceId.slice(0, 8)}... đã được thanh toán bởi ${user.displayName || user.email}`,
-    read: false, createdAt: FieldValue.serverTimestamp(),
-  })
+    // Admin notification
+    await db.collection("admin_notifications").add({
+      type: "INVOICE_PAID", invoiceId,
+      message: `Hóa đơn ${invoiceId.slice(0, 8)}... đã được thanh toán bởi ${user.displayName || user.email}`,
+      read: false, createdAt: FieldValue.serverTimestamp(),
+    })
 
-  return { success: true }
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err.message || "Lỗi thanh toán không xác định" }
+  }
 }

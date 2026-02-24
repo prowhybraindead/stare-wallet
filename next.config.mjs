@@ -11,7 +11,7 @@ const nextConfig = {
   },
   experimental: {
     serverActions: {
-      allowedOrigins: ["localhost:3000", "*.vercel.app", "*.selfservice.io.vn"]
+      allowedOrigins: ["localhost:3000", "*.vercel.app", "starewallet.selfservice.io.vn"]
     },
   },
 };
