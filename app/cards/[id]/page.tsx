@@ -1,7 +1,6 @@
 "use client"
 import { useEffect, useState, memo } from "react"
 import { useParams, useRouter } from "next/navigation"
-import dynamic from "next/dynamic"
 import { motion } from "framer-motion"
 import { auth, db } from "@/lib/firebase"
 import { onAuthStateChanged } from "firebase/auth"
@@ -18,14 +17,7 @@ import {
     ArrowUpRight, ArrowDownLeft, TrendingUp, CreditCard, RotateCcw,
     Utensils, ShoppingBag, Car, Play, Zap, ArrowLeftRight, CircleDollarSign,
 } from "lucide-react"
-// Lazy-load recharts (~200KB saving on initial bundle)
-const AreaChart = dynamic(() => import("recharts").then(m => m.AreaChart), { ssr: false }) as any
-const Area = dynamic(() => import("recharts").then(m => m.Area), { ssr: false }) as any
-const XAxis = dynamic(() => import("recharts").then(m => m.XAxis), { ssr: false }) as any
-const YAxis = dynamic(() => import("recharts").then(m => m.YAxis), { ssr: false }) as any
-const CartesianGrid = dynamic(() => import("recharts").then(m => m.CartesianGrid), { ssr: false }) as any
-const RechartsTooltip = dynamic(() => import("recharts").then(m => m.Tooltip), { ssr: false }) as any
-const ResponsiveContainer = dynamic(() => import("recharts").then(m => m.ResponsiveContainer), { ssr: false }) as any
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 
 // ── Mock Analytics Data ────────────────────────────────────────────────────────
 const MOCK_DAILY = [
@@ -464,7 +456,7 @@ export default function CardDetailPage() {
                                         <XAxis dataKey="day" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                                         <YAxis stroke="#64748b" tick={{ fontSize: 10 }} axisLine={false} tickLine={false}
                                             tickFormatter={(v) => `${(v / 1000000).toFixed(1)}M`} />
-                                        <RechartsTooltip
+                                        <Tooltip
                                             contentStyle={{ background: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#f1f5f9", fontSize: 12 }}
                                             formatter={(value: any) => [formatCurrency(value), "Chi tiêu"]}
                                         />
