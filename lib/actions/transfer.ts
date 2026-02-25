@@ -6,6 +6,12 @@ import { v4 as uuidv4 } from "uuid"
 
 const PLATFORM_FEE_RATE = 0.001 // 0.1%
 
+function getTreasuryUid(): string {
+  const uid = process.env.TREASURY_UID
+  if (!uid) throw new Error("System Error: Treasury UID not configured.")
+  return uid
+}
+
 export async function p2pTransfer(
   idToken: string,
   pin: string,
@@ -161,14 +167,23 @@ export async function payMerchantInvoice(idToken: string, pin: string, invoiceId
     if ((user.mainBalance || 0) < invoice.amount) return { success: false, error: "Số dư không đủ" }
 
     // Execute payment
+    // Determine receiverId: use invoice.receiverId (Treasury) or fallback
+    const receiverId = invoice.receiverId || getTreasuryUid()
+    const receiverRef = db.collection("users").doc(receiverId)
+
     await db.runTransaction(async (t) => {
+      // Deduct from payer
       t.update(userDoc.ref, { mainBalance: FieldValue.increment(-invoice.amount) })
+      // Credit Treasury / receiverId
+      t.update(receiverRef, { mainBalance: FieldValue.increment(invoice.amount) })
+      // Mark invoice as paid
       t.update(invDoc.ref, { status: "PAID", paidBy: decoded.uid, paidAt: FieldValue.serverTimestamp() })
+      // Transaction log
       const txId = uuidv4()
       t.set(db.collection("transactions").doc(txId), {
         transactionId: txId, type: "INVOICE_PAYMENT",
         amount: invoice.amount, netAmount: invoice.amount, fee: 0,
-        senderId: decoded.uid, receiverId: invoice.merchantId,
+        senderId: decoded.uid, receiverId: receiverId,
         invoiceId: invoiceId, status: "COMPLETED",
         timestamp: FieldValue.serverTimestamp(),
         refundedByAdmin: false,
