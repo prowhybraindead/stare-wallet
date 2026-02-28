@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { Html5Qrcode } from "html5-qrcode"
 import { auth } from "@/lib/firebase"
-import { payMerchantInvoice } from "@/lib/actions/transfer"
+import { payMerchantInvoice, payMerchantQR } from "@/lib/actions/transfer"
 import { formatCurrency } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,7 +17,7 @@ import {
     Loader2, Receipt, CheckCircle, RefreshCw, ScanLine,
 } from "lucide-react"
 
-type InvoicePayload = { type: "UPGRADE_INVOICE"; invoiceId: string; amount: number }
+type InvoicePayload = { type: "UPGRADE_INVOICE" | "MERCHANT_PAYMENT"; invoiceId: string; amount: number }
 type CameraState = "requesting" | "granted" | "denied" | "error"
 
 export default function ScanPayPage() {
@@ -64,19 +64,28 @@ export default function ScanPayPage() {
         } catch { }
 
         // 2. Check if it's a URL or contains invoice identifiers
-        if (trimmed.startsWith("http") || trimmed.includes("/pay/") || trimmed.includes("invoice")) {
+        if (trimmed.startsWith("http") || trimmed.includes("/pay/") || trimmed.includes("invoice") || trimmed.startsWith("sharkcredit://pay/")) {
             let invoiceId = trimmed
             try {
                 const url = new URL(trimmed)
                 const parts = url.pathname.split("/").filter(Boolean)
-                invoiceId = parts[parts.length - 1] || trimmed
+                if (parts[0] === "pay" && parts.length === 3) {
+                    invoiceId = `${parts[1]}_${parts[2]}`;
+                } else {
+                    invoiceId = parts[parts.length - 1] || trimmed
+                }
             } catch {
-                // Not a valid URL — use the raw string minus common prefixes
-                const match = trimmed.match(/(?:invoice[=\/:]?\s*)([a-zA-Z0-9_-]+)/i)
-                if (match) invoiceId = match[1]
+                const matchUrl = trimmed.match(/sharkcredit:\/\/pay\/(.+)/i);
+                if (matchUrl) {
+                    invoiceId = matchUrl[1];
+                } else {
+                    const match = trimmed.match(/(?:invoice[=\/:]?\s*)([a-zA-Z0-9_-]+)/i)
+                    if (match) invoiceId = match[1]
+                }
             }
-            // Set as invoice data with unknown amount (user will see it after fetch)
-            setInvoiceData({ type: "UPGRADE_INVOICE", invoiceId, amount: 0 })
+            
+            const payloadType = invoiceId.includes("_") ? "MERCHANT_PAYMENT" : "UPGRADE_INVOICE";
+            setInvoiceData({ type: payloadType, invoiceId, amount: 0 })
             toast({ title: "Hóa đơn đã quét!", description: `ID: ${invoiceId.slice(0, 12)}...` })
             return
         }
@@ -152,11 +161,16 @@ export default function ScanPayPage() {
         try {
             const token = await auth.currentUser?.getIdToken()
             if (!token) throw new Error("Chưa đăng nhập")
-            const result = await payMerchantInvoice(token, pin, invoiceData.invoiceId)
-            if (!result.success) {
-                toast({ title: "Lỗi thanh toán", description: result.error, variant: "destructive" })
-                return
+            
+            if (invoiceData.type === "MERCHANT_PAYMENT") {
+                await payMerchantQR(token, pin, invoiceData.invoiceId)
+            } else {
+                const result = await payMerchantInvoice(token, pin, invoiceData.invoiceId)
+                if (!result.success) {
+                    throw new Error(result.error)
+                }
             }
+            
             setPaymentDone(true)
             toast({ title: "Thanh toán thành công!" })
         } catch (e: any) {
@@ -195,7 +209,7 @@ export default function ScanPayPage() {
                             <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><Receipt className="w-4 h-4" />Chi tiết hóa đơn nâng cấp</CardTitle></CardHeader>
                             <CardContent className="space-y-3 text-sm">
                                 <div className="flex justify-between"><span className="text-slate-500">Invoice ID</span><span className="font-mono text-xs">{invoiceData.invoiceId.slice(0, 12)}...</span></div>
-                                <div className="flex justify-between"><span className="text-slate-500">Loại</span><Badge variant="outline">UPGRADE_INVOICE</Badge></div>
+                                <div className="flex justify-between"><span className="text-slate-500">Loại</span><Badge variant="outline">{invoiceData.type}</Badge></div>
                                 <div className="flex justify-between items-center"><span className="text-slate-500">Số tiền</span><span className="font-bold text-2xl text-white">{formatCurrency(invoiceData.amount)}</span></div>
                             </CardContent>
                         </Card>

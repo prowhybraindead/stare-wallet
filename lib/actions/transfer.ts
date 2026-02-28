@@ -82,6 +82,9 @@ export async function p2pTransfer(
   return { transactionId, amount, fee, netAmount }
 }
 
+import crypto from "crypto"
+
+// ── QR External Payment ───────────────────────────────────────────────────────
 export async function payMerchantQR(
   idToken: string,
   pin: string,
@@ -108,12 +111,18 @@ export async function payMerchantQR(
   const pinValid = await bcrypt.compare(pin, userData.pinCode)
   if (!pinValid) throw new Error("Mã PIN không đúng")
   if (userData.isFrozen) throw new Error("Tài khoản bị khóa")
-  if (linkData.status !== "UNPAID") throw new Error("Mã QR đã được thanh toán")
+  if (linkData.status !== "UNPAID") throw new Error("Hóa đơn đã được thanh toán trước đó")
   if (userData.mainBalance < linkData.amount) throw new Error("Số dư không đủ")
 
   const merchantDoc = await adminDb.collection("merchants").doc(linkData.merchantId).get()
   if (!merchantDoc.exists) throw new Error("Merchant không tồn tại")
   const merchantData = merchantDoc.data()!
+  
+  if (!merchantData.walletUid) {
+    throw new Error("Merchant wallet not linked")
+  }
+
+  const walletRef = adminDb.collection("users").doc(merchantData.walletUid)
 
   const fee = Math.round(linkData.amount * PLATFORM_FEE_RATE)
   const netAmount = linkData.amount - fee
@@ -121,7 +130,7 @@ export async function payMerchantQR(
 
   await adminDb.runTransaction(async (t) => {
     t.update(userDoc.ref, { mainBalance: FieldValue.increment(-linkData.amount) })
-    t.update(merchantDoc.ref, { balance: FieldValue.increment(netAmount) })
+    t.update(walletRef, { mainBalance: FieldValue.increment(netAmount) })
     t.update(linkDoc.ref, { status: "PAID", paidByUserId: userId, paidAt: FieldValue.serverTimestamp() })
     t.set(adminDb.collection("transactions").doc(transactionId), {
       transactionId,
@@ -130,7 +139,8 @@ export async function payMerchantQR(
       netAmount,
       fee,
       senderId: userId,
-      receiverId: linkData.merchantId,
+      receiverId: merchantData.walletUid,
+      merchantId: linkData.merchantId,
       paymentLinkId,
       description: linkData.description,
       status: "COMPLETED",
@@ -138,6 +148,34 @@ export async function payMerchantQR(
       refundedByAdmin: false,
     })
   })
+
+  // Silent Webhook Dispatch
+  if (linkData.webhookUrl) {
+    const secret = process.env.SHARK_CREDIT_SECRET_KEY
+    if (secret) {
+      const payload = {
+        event: "payment_success",
+        billId: linkData.billId,
+        merchantId: linkData.merchantId,
+        transactionId,
+        amount: linkData.amount,
+        fee,
+        netAmount,
+        status: "PAID",
+        timestamp: new Date().toISOString()
+      }
+      const signature = crypto.createHmac("sha256", secret).update(JSON.stringify(payload)).digest("hex")
+      
+      fetch(linkData.webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shark-Signature": signature
+        },
+        body: JSON.stringify(payload)
+      }).catch(err => console.error("Webhook Delivery Failed:", err))
+    }
+  }
 
   return { transactionId, amount: linkData.amount }
 }
